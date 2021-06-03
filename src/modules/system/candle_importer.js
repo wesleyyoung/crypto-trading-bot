@@ -16,9 +16,7 @@ module.exports = class CandleImporter {
       // on init we can have a lot or REST api we can have a lot of candles
       // reduce database locking time by split them
       if (candles.length > 0) {
-        for (const chunk of _.chunk(candles, 1000)) {
-          await this.insertCandles(chunk);
-        }
+        _.chunk(candles, 1000).forEach(chunk => this.insertCandles(chunk).then());
       }
 
       promises.forEach(resolve => {
@@ -38,11 +36,14 @@ module.exports = class CandleImporter {
    * @returns {Promise<void>}
    */
   async insertThrottledCandles(candles) {
-    for (const candle of candles) {
+    candles.forEach(candle => {
       this.trottle[candle.exchange + candle.symbol + candle.period + candle.time] = candle;
-    }
+    });
 
-    const { promise, resolve } = this.getPromise();
+    const {
+      promise,
+      resolve
+    } = this.getPromise();
 
     this.promises.push(resolve);
 
@@ -59,6 +60,9 @@ module.exports = class CandleImporter {
       resolve = res;
     });
 
-    return { promise, resolve };
+    return {
+      promise,
+      resolve
+    };
   }
 };

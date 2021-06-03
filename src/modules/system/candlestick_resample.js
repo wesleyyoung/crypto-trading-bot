@@ -22,7 +22,7 @@ module.exports = class CandlestickResample {
     const fromMinute = resample.convertPeriodToMinute(periodFrom);
 
     if (fromMinute > toMinute) {
-      throw 'Invalid resample "from" must be geater then "to"';
+      throw new Error('Invalid resample "from" must be geater then "to"');
     }
 
     // we need some

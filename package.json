@@ -55,7 +55,7 @@
     "zero-fill": "^2.2.3"
   },
   "engines": {
-    "node": "^8.3.0 || ^10"
+    "node": "^14.0.0"
   },
   "homepage": "https://github.com/coinbase/coinbase-pro-node",
   "keywords": [

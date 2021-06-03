@@ -7,7 +7,6 @@ module.exports = class {
 
   buildIndicator(indicatorBuilder, options) {
     indicatorBuilder.add('obv', 'obv', '1m');
-
     indicatorBuilder.add('ema', 'ema', '1m', {
       length: 200
     });

@@ -5,13 +5,17 @@
     "jquery": true,
     "mocha": true
   },
+  "ecmaFeatures": {
+    "impliedStrict": true
+  },
   "extends": ["airbnb", "prettier", "plugin:node/recommended"],
   "plugins": ["promise","prettier"],
   "parserOptions": {
-    "ecmaVersion": 2017
+    "ecmaVersion": 2018
   },
   "rules": {
-    "prettier/prettier": "error",
+    "prettier/prettier": "warn",
+    "dot-location": ["off"],
     "no-unused-vars": "warn",
     "no-console": "off",
     "func-names": "off",

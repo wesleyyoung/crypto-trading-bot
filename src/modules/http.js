@@ -36,6 +36,14 @@ module.exports = class Http {
     this.tickers = tickers;
   }
 
+  handleError(res, error) {
+    res.sendStatus(500);
+    return res.send({
+      message: 'An error has occurred',
+      error
+    });
+  }
+
   start() {
     twig.extendFilter('price_format', function(value) {
       if (parseFloat(value) < 1) {
@@ -92,9 +100,17 @@ module.exports = class Http {
       strict_variables: false
     });
 
-    app.use(express.urlencoded({ limit: '12mb', extended: true, parameterLimit: 50000 }));
+    app.use(
+      express.urlencoded({
+        limit: '12mb',
+        extended: true,
+        parameterLimit: 50000
+      })
+    );
+
     app.use(cookieParser());
     app.use(compression());
+
     app.use(express.static(`${this.projectDir}/web/static`, { maxAge: 3600000 * 24 }));
 
     const username = this.systemUtil.getConfig('webserver.username');
@@ -115,59 +131,67 @@ module.exports = class Http {
 
     const { ta } = this;
 
-    app.get('/', async (req, res) => {
-      res.render(
-        '../templates/base.html.twig',
-        await ta.getTaForPeriods(this.systemUtil.getConfig('dashboard.periods', ['15m', '1h']))
+    app.get('/', (req, res) => {
+      ta.getTaForPeriods(this.systemUtil.getConfig('dashboard.periods', ['15m', '1h'])).then(
+        result => {
+          return res.render('../templates/base.html.twig', result);
+        },
+        error => this.handleError(res, error)
       );
     });
 
-    app.get('/backtest', async (req, res) => {
-      res.render('../templates/backtest.html.twig', {
-        strategies: this.backtest.getBacktestStrategies(),
-        pairs: await this.backtest.getBacktestPairs()
-      });
+    app.get('/backtest', (req, res) => {
+      this.backtest.getBacktestPairs().then(
+        pairs => {
+          res.render('../templates/backtest.html.twig', {
+            strategies: this.backtest.getBacktestStrategies(),
+            pairs
+          });
+        },
+        error => this.handleError(res, error)
+      );
     });
 
-    app.post('/backtest/submit', async (req, res) => {
+    app.post('/backtest/submit', (req, res) => {
       let pairs = req.body.pair;
 
       if (typeof pairs === 'string') {
         pairs = [pairs];
       }
 
-      const asyncs = pairs.map(pair => {
-        return async () => {
-          const p = pair.split('.');
-
-          return {
+      const asyncCalls = pairs.map(pair => {
+        const p = pair.split('.');
+        return this.backtest
+          .getBacktestResult(
+            parseInt(req.body.ticker_interval, 10),
+            req.body.hours,
+            req.body.strategy,
+            req.body.candle_period,
+            p[0],
+            p[1],
+            req.body.options ? JSON.parse(req.body.options) : {},
+            req.body.initial_capital
+          )
+          .then(result => ({
             pair: pair,
-            result: await this.backtest.getBacktestResult(
-              parseInt(req.body.ticker_interval, 10),
-              req.body.hours,
-              req.body.strategy,
-              req.body.candle_period,
-              p[0],
-              p[1],
-              req.body.options ? JSON.parse(req.body.options) : {},
-              req.body.initial_capital
-            )
-          };
-        };
+            result
+          }));
       });
 
-      const backtests = await Promise.all(asyncs.map(fn => fn()));
+      Promise.all(asyncCalls).then(
+        backtests => {
+          // single details view
+          if (backtests.length === 1) {
+            return res.render('../templates/backtest_submit.html.twig', backtests[0].result);
+          }
 
-      // single details view
-      if (backtests.length === 1) {
-        res.render('../templates/backtest_submit.html.twig', backtests[0].result);
-        return;
-      }
-
-      // multiple view
-      res.render('../templates/backtest_submit_multiple.html.twig', {
-        backtests: backtests
-      });
+          // multiple view
+          return res.render('../templates/backtest_submit_multiple.html.twig', {
+            backtests
+          });
+        },
+        error => this.handleError(res, error)
+      );
     });
 
     app.get('/tradingview/:symbol', (req, res) => {
@@ -176,29 +200,36 @@ module.exports = class Http {
       });
     });
 
-    app.get('/signals', async (req, res) => {
-      res.render('../templates/signals.html.twig', {
-        signals: await this.signalHttp.getSignals(Math.floor(Date.now() / 1000) - 60 * 60 * 48)
-      });
+    app.get('/signals', (req, res) => {
+      this.signalHttp.getSignals(Math.floor(Date.now() / 1000) - 60 * 60 * 48).then(
+        signals => res.render('../templates/signals.html.twig', { signals }),
+        error => this.handleError(res, error)
+      );
     });
 
-    app.get('/pairs', async (req, res) => {
-      const pairs = await this.pairsHttp.getTradePairs();
-
-      res.render('../templates/pairs.html.twig', {
-        pairs: pairs,
-        stats: {
-          positions: pairs.filter(p => p.has_position === true).length,
-          trading: pairs.filter(p => p.is_trading === true).length
-        }
-      });
+    app.get('/pairs', (req, res) => {
+      this.pairsHttp.getTradePairs().then(
+        pairs => {
+          res.render('../templates/pairs.html.twig', {
+            pairs: pairs,
+            stats: {
+              positions: !!pairs.find(p => p.has_position === true),
+              trading: !!pairs.find(p => p.is_trading === true)
+            }
+          });
+        },
+        error => this.handleError(res, error)
+      );
     });
 
-    app.get('/logs', async (req, res) => {
-      res.render('../templates/logs.html.twig', await this.logsHttp.getLogsPageVariables(req, res));
+    app.get('/logs', (req, res) => {
+      this.logsHttp.getLogsPageVariables(req, res).then(
+        result => res.render('../templates/logs.html.twig', result),
+        error => this.handleError(res, error)
+      );
     });
 
-    app.get('/desks/:desk', async (req, res) => {
+    app.get('/desks/:desk', (req, res) => {
       res.render('../templates/desks.html.twig', {
         desk: this.systemUtil.getConfig('desks')[req.params.desk],
         interval: req.query.interval || undefined,
@@ -216,45 +247,52 @@ module.exports = class Http {
       });
     });
 
-    app.get('/tools/candles', async (req, res) => {
-      const options = {
-        pairs: await this.candleExportHttp.getPairs(),
-        start: moment()
-          .subtract(7, 'days')
-          .toDate(),
-        end: new Date()
-      };
+    app.get('/tools/candles', (req, res) => {
+      this.candleExportHttp.getPairs().then(
+        pairs => {
+          const options = {
+            pairs,
+            start: moment()
+              .subtract(7, 'days')
+              .toDate(),
+            end: new Date()
+          };
 
-      if (req.query.pair && req.query.period && req.query.period && req.query.start && req.query.end) {
-        const [exchange, symbol] = req.query.pair.split('.');
-        const candles = await this.candleExportHttp.getCandles(
-          exchange,
-          symbol,
-          req.query.period,
-          new Date(req.query.start),
-          new Date(req.query.end)
-        );
+          if (req.query.pair && req.query.period && req.query.period && req.query.start && req.query.end) {
+            const [exchange, symbol] = req.query.pair.split('.');
 
-        if (req.query.metadata) {
-          candles.map(c => {
-            c.exchange = exchange;
-            c.symbol = symbol;
-            c.period = req.query.period;
-            return c;
-          });
-        }
+            this.candleExportHttp
+              .getCandles(exchange, symbol, req.query.period, new Date(req.query.start), new Date(req.query.end))
+              .then(
+                candles => {
+                  if (req.query.metadata) {
+                    candles.map(c => ({
+                      ...c,
+                      exchange: exchange,
+                      symbol: symbol,
+                      period: req.query.period
+                    }));
+                  }
 
-        options.start = new Date(req.query.start);
-        options.end = new Date(req.query.end);
+                  options.start = new Date(req.query.start);
+                  options.end = new Date(req.query.end);
 
-        options.exchange = exchange;
-        options.symbol = symbol;
-        options.period = req.query.period;
-        options.candles = candles;
-        options.candles_json = JSON.stringify(candles, null, 2);
-      }
+                  options.exchange = exchange;
+                  options.symbol = symbol;
+                  options.period = req.query.period;
+                  options.candles = candles;
+                  options.candles_json = JSON.stringify(candles, null, 2);
 
-      res.render('../templates/candle_stick_export.html.twig', options);
+                  res.render('../templates/candle_stick_export.html.twig', options);
+                },
+                error => this.handleError(res, error)
+              );
+          } else {
+            res.render('../templates/candle_stick_export.html.twig', options);
+          }
+        },
+        error => this.handleError(res, error)
+      );
     });
 
     app.post('/tools/candles', async (req, res) => {
@@ -382,56 +420,79 @@ module.exports = class Http {
       const orders = [];
 
       const exchanges = exchangeManager.all();
-      for (const key in exchanges) {
-        const exchange = exchanges[key];
 
+      let completedExchanges = 0;
+
+      const finish = () => {
+        res.json({
+          orders: orders.sort((a, b) => a.order.symbol.localeCompare(b.order.symbol)),
+          positions: positions.sort((a, b) => a.position.symbol.localeCompare(b.position.symbol))
+        });
+      };
+
+      Object.entries(exchanges).forEach(([key, exchange]) => {
         const exchangeName = exchange.getName();
 
-        const myPositions = await exchange.getPositions();
-        myPositions.forEach(position => {
-          // simply converting of asset to currency value
-          let currencyValue;
-          let currencyProfit;
+        exchange.getPositions().then(
+          myPositions => {
+            myPositions.forEach(position => {
+              // simply converting of asset to currency value
+              let currencyValue;
+              let currencyProfit;
 
-          if (
-            (exchangeName.includes('bitmex') && ['XBTUSD', 'ETHUSD'].includes(position.symbol)) ||
-            exchangeName.includes('bybit')
-          ) {
-            // inverse exchanges
-            currencyValue = Math.abs(position.amount);
-          } else if (position.amount && position.entry) {
-            currencyValue = position.entry * Math.abs(position.amount);
-          }
+              if (
+                (exchangeName.includes('bitmex') && ['XBTUSD', 'ETHUSD'].includes(position.symbol)) ||
+                exchangeName.includes('bybit')
+              ) {
+                // inverse exchanges
+                currencyValue = Math.abs(position.amount);
+              } else if (position.amount && position.entry) {
+                currencyValue = position.entry * Math.abs(position.amount);
+              }
 
-          positions.push({
-            exchange: exchangeName,
-            position: position,
-            currency: currencyValue,
-            currencyProfit: position.getProfit()
-              ? currencyValue + (currencyValue / 100) * position.getProfit()
-              : undefined
-          });
-        });
+              positions.push({
+                exchange: exchangeName,
+                position: position,
+                currency: currencyValue,
+                currencyProfit: position.getProfit()
+                  ? currencyValue + (currencyValue / 100) * position.getProfit()
+                  : undefined
+              });
+            });
 
-        const myOrders = await exchange.getOrders();
-        myOrders.forEach(order => {
-          const items = {
-            exchange: exchange.getName(),
-            order: order
-          };
+            exchange.getOrders().then(myOrders => {
+              if (!myOrders.length) {
+                completedExchanges += 1;
 
-          const ticker = this.tickers.get(exchange.getName(), order.symbol);
-          if (ticker) {
-            items.percent_to_price = OrderUtil.getPercentDifferent(order.price, ticker.bid);
-          }
+                if (completedExchanges === exchanges.length) finish();
+              } else {
+                let completedOrders = 0;
+                myOrders.forEach(order => {
+                  const items = {
+                    exchange: exchange.getName(),
+                    order: order
+                  };
 
-          orders.push(items);
-        });
-      }
+                  const ticker = this.tickers.get(exchange.getName(), order.symbol);
+                  if (ticker) {
+                    items.percent_to_price = OrderUtil.getPercentDifferent(order.price, ticker.bid);
+                  }
 
-      res.json({
-        orders: orders.sort((a, b) => a.order.symbol.localeCompare(b.order.symbol)),
-        positions: positions.sort((a, b) => a.position.symbol.localeCompare(b.position.symbol))
+                  orders.push(items);
+
+                  completedOrders += 1;
+
+                  if (completedOrders === myOrders.length) {
+                    completedExchanges += 1;
+
+                    if (completedExchanges === exchanges.length) finish();
+                  }
+                });
+              }
+            });
+          },
+          error => this.handleError(res, error)
+        );
       });
     });
 

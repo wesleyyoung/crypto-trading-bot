@@ -11,7 +11,7 @@ module.exports = class Backfill {
   async backfill(exchangeName, symbol, period, date) {
     const exchange = this.exchangesIterator.find(e => e.getName() === exchangeName);
     if (!exchange) {
-      throw `Exchange not found: ${exchangeName}`;
+      throw new Error(`Exchange not found: ${exchangeName}`);
     }
 
     let start = moment().subtract(date, 'days');
