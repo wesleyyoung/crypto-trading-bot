@@ -20,18 +20,13 @@ module.exports = class OrderExecutor {
    * Keep open orders in orderbook at first position
    */
   adjustOpenOrdersPrice(...pairStates) {
-    for (const orderId in this.runningOrders) {
-      if (this.runningOrders[orderId] < moment().subtract(2, 'minutes')) {
-        this.logger.debug(
-          `OrderAdjust: adjustOpenOrdersPrice timeout cleanup: ${JSON.stringify([
-            orderId,
-            this.runningOrders[orderId]
-          ])}`
-        );
+    Object.entries({ ...this.runningOrders }).forEach(([id, order]) => {
+      if (order < moment().subtract(2, 'minutes')) {
+        this.logger.debug(`OrderAdjust: adjustOpenOrdersPrice timeout cleanup: ${JSON.stringify([id, order])}`);
 
-        delete this.runningOrders[orderId];
+        delete this.runningOrders[id];
       }
-    }
+    });
 
     const visitExchangeOrder = async pairState => {
       if (!pairState.hasAdjustedPrice()) {
@@ -152,8 +147,8 @@ module.exports = class OrderExecutor {
 
           this.logger.error(`OrderAdjust: replacing canceled order: ${JSON.stringify(retryOrder)}`);
 
-          const exchangeOrder = await this.executeOrder(pairState.getOrder(), retryOrder);
-          pairState.setExchangeOrder(exchangeOrder);
+          const executedExchangeOrder = await this.executeOrder(pairState.getOrder(), retryOrder);
+          pairState.setExchangeOrder(executedExchangeOrder);
         } else {
           this.logger.error(`OrderAdjust: Unknown order state: ${JSON.stringify([pairState, updatedOrder])}`);
         }
@@ -199,16 +194,15 @@ module.exports = class OrderExecutor {
   }
 
   executeOrder(exchangeName, order) {
-    return new Promise(async resolve => {
-      await this.triggerOrder(resolve, exchangeName, order);
-    });
+    return new Promise(resolve => this.triggerOrder(resolve, exchangeName, order).then());
   }
 
+  // eslint-disable-next-line consistent-return
   async cancelOrder(exchangeName, orderId) {
     const exchange = this.exchangeManager.get(exchangeName);
     if (!exchange) {
       console.error(`CancelOrder: Invalid exchange: ${exchangeName}`);
-      return;
+      return undefined;
     }
 
     try {
@@ -227,6 +221,7 @@ module.exports = class OrderExecutor {
       return await exchange.cancelAll(symbol);
     } catch (err) {
       this.logger.error(`Order cancel all error: ${JSON.stringify([symbol, err])}`);
+      return null;
     }
   }
 
@@ -339,7 +334,7 @@ module.exports = class OrderExecutor {
    */
   getCurrentPrice(exchangeName, symbol, side) {
     if (!['long', 'short'].includes(side)) {
-      throw `Invalid side: ${side}`;
+      throw new Error(`Invalid side: ${side}`);
     }
 
     return new Promise(async resolve => {
